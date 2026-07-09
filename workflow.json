@@ -1,0 +1,1162 @@
+{
+  "name": "Automated Resume Relevance Scoring Workflow",
+  "nodes": [
+    {
+      "parameters": {
+        "pollTimes": {
+          "item": [
+            {
+              "mode": "everyMinute"
+            }
+          ]
+        },
+        "authentication": "serviceAccount",
+        "triggerOn": "specificFolder",
+        "folderToWatch": {
+          "__rl": true,
+          "value": "13RpGDbzIxwZ8AAx6_OITc8a-MIYsKIC9",
+          "mode": "list",
+          "cachedResultName": "Resumes",
+          "cachedResultUrl": "https://drive.google.com/drive/folders/13RpGDbzIxwZ8AAx6_OITc8a-MIYsKIC9"
+        },
+        "event": "fileCreated",
+        "options": {}
+      },
+      "id": "5b854890-a585-45ed-9844-616dc38326c0",
+      "name": "New Resume Uploaded",
+      "type": "n8n-nodes-base.googleDriveTrigger",
+      "typeVersion": 1,
+      "position": [
+        -41440,
+        8064
+      ],
+      "credentials": {
+        "googleApi": {
+          "id": "RxLhX4jdJYDqGjHO",
+          "name": "Google Drive account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "id-1",
+              "name": "resume_file_id",
+              "value": "={{ $json.id }}",
+              "type": "string"
+            },
+            {
+              "id": "id-2",
+              "name": "resume_file_name",
+              "value": "={{ $json.name }}",
+              "type": "string"
+            },
+            {
+              "id": "id-3",
+              "name": "resume_mime_type",
+              "value": "={{ $json.mimeType }}",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "183c2117-2315-49ab-9f1e-8fb9f8106ccf",
+      "name": "Workflow Configuration",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        -41216,
+        8064
+      ]
+    },
+    {
+      "parameters": {
+        "authentication": "serviceAccount",
+        "operation": "download",
+        "fileId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "={{ $json.resume_file_id }}"
+        },
+        "options": {}
+      },
+      "id": "b57301a4-a3e6-4b40-a1d0-3a815c03b6a8",
+      "name": "Download Resume File",
+      "type": "n8n-nodes-base.googleDrive",
+      "typeVersion": 3,
+      "position": [
+        -40768,
+        8160
+      ],
+      "credentials": {
+        "googleApi": {
+          "id": "RxLhX4jdJYDqGjHO",
+          "name": "Google Drive account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "pdf",
+        "options": {}
+      },
+      "id": "391de08f-14c1-4702-8a4c-592b76a88f2f",
+      "name": "Extract Resume Text",
+      "type": "n8n-nodes-base.extractFromFile",
+      "typeVersion": 1.1,
+      "position": [
+        -40320,
+        8064
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const crypto = require('crypto');\nconst text = $input.item.json.text || '';\nconst hash = crypto.createHash('sha256').update(text).digest('hex');\n\nreturn {\n  resume_text: text,\n  resume_hash: hash\n};"
+      },
+      "id": "d5dd2b46-aa23-46af-9e63-6f2d303b6a2c",
+      "name": "Generate Resume Hash",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -40096,
+        8160
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "const text = $input.item.json.resume_text || '';\n\n// Word count\nconst wordCount = text.split(/\\s+/).filter(w => w.length > 0).length;\n\n// Character count\nconst charCount = text.length;\n\n// Check for key sections (case-insensitive)\nconst lowerText = text.toLowerCase();\nconst hasSkillsSection = /skills?|technical|competencies|expertise/.test(lowerText);\nconst hasExperienceSection = /experience|employment|work history|professional/.test(lowerText);\nconst hasEducationSection = /education|academic|qualification|degree/.test(lowerText);\n\n// Formatting quality indicators\nconst hasEmail = /@/.test(text);\nconst hasPhone = /\\+?\\d{1,4}[\\s.-]?\\(?\\d{1,4}\\)?[\\s.-]?\\d{1,4}[\\s.-]?\\d{1,9}/.test(text);\nconst hasBulletPoints = /[•●○■□▪▫–-]/.test(text) || /^\\s*[-*]\\s/m.test(text);\n\n// Calculate section completeness score (0-3)\nconst sectionScore = (hasSkillsSection ? 1 : 0) + (hasExperienceSection ? 1 : 0) + (hasEducationSection ? 1 : 0);\n\n// Calculate formatting score (0-3)\nconst formattingScore = (hasEmail ? 1 : 0) + (hasPhone ? 1 : 0) + (hasBulletPoints ? 1 : 0);\n\n// Overall quality score (0-100)\nconst qualityScore = Math.round(\n  (wordCount >= 600 ? 40 : wordCount >= 300 ? 25 : wordCount >= 100 ? 10 : 0) +\n  (sectionScore / 3 * 30) +\n  (formattingScore / 3 * 30)\n);\n\n// Determine readability category\nlet readability = 'Poor';\nif (qualityScore >= 70) readability = 'Good';\nelse if (qualityScore >= 40) readability = 'Average';\n\nreturn {\n  ...($input.item.json),\n  readability,\n  word_count: wordCount,\n  char_count: charCount,\n  has_skills_section: hasSkillsSection,\n  has_experience_section: hasExperienceSection,\n  has_education_section: hasEducationSection,\n  has_email: hasEmail,\n  has_phone: hasPhone,\n  has_bullet_points: hasBulletPoints,\n  section_completeness_score: sectionScore,\n  formatting_score: formattingScore,\n  quality_score: qualityScore\n};"
+      },
+      "id": "c559d0d0-f944-4636-8d49-6b2ddae4002d",
+      "name": "Resume Readability Check",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -39872,
+        8160
+      ]
+    },
+    {
+      "parameters": {
+        "authentication": "serviceAccount",
+        "operation": "download",
+        "fileId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "1HDYzYTt-bGe02br128lKxAdt6wEm5QDH"
+        },
+        "options": {}
+      },
+      "id": "520b8820-179d-4c4f-8381-4e678720f1cd",
+      "name": "Find Job Description",
+      "type": "n8n-nodes-base.googleDrive",
+      "typeVersion": 3,
+      "position": [
+        -39648,
+        8416
+      ],
+      "credentials": {
+        "googleApi": {
+          "id": "RxLhX4jdJYDqGjHO",
+          "name": "Google Drive account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "authentication": "serviceAccount",
+        "operation": "download",
+        "fileId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "1HDYzYTt-bGe02br128lKxAdt6wEm5QDH"
+        },
+        "options": {}
+      },
+      "id": "e7ebcf54-e1ed-4a3b-a5da-bc5873c5299c",
+      "name": "Download Job Description",
+      "type": "n8n-nodes-base.googleDrive",
+      "typeVersion": 3,
+      "position": [
+        -39424,
+        8416
+      ],
+      "credentials": {
+        "googleApi": {
+          "id": "RxLhX4jdJYDqGjHO",
+          "name": "Google Drive account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "pdf",
+        "options": {}
+      },
+      "id": "3991fb42-5b3e-448d-9695-f054eadf2d34",
+      "name": "Extract JD Text",
+      "type": "n8n-nodes-base.extractFromFile",
+      "typeVersion": 1.1,
+      "position": [
+        -39200,
+        8416
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const crypto = require('crypto');\nconst text = $input.item.json.text || '';\nconst hash = crypto.createHash('sha256').update(text).digest('hex');\n\nconst resumeData = $('Resume Readability Check').item.json;\n\nreturn {\n  ...resumeData,\n  jd_text: text,\n  jd_hash: hash\n};"
+      },
+      "id": "eae5eecd-79e0-46c8-a9ff-85bb158cbc57",
+      "name": "Generate JD Hash",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -38976,
+        8416
+      ]
+    },
+    {
+      "parameters": {
+        "model": {
+          "__rl": true,
+          "mode": "id",
+          "value": "gpt-4o-mini"
+        },
+        "builtInTools": {},
+        "options": {}
+      },
+      "id": "c4050025-d84c-4580-9716-c4c374d7385c",
+      "name": "OpenAI Chat Model",
+      "type": "@n8n/n8n-nodes-langchain.lmChatOpenAi",
+      "typeVersion": 1.3,
+      "position": [
+        -38688,
+        8128
+      ],
+      "credentials": {
+        "openAiApi": {
+          "id": "r1ym3t2q6gtAyukR",
+          "name": "n8n free OpenAI API credits"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "schemaType": "manual",
+        "inputSchema": "{\n  \"type\": \"object\",\n  \"properties\": {\n    \"candidate_name\": {\"type\": \"string\"},\n    \"email\": {\"type\": \"string\"},\n    \"phone\": {\"type\": \"string\"},\n    \"skills\": {\"type\": \"array\", \"items\": {\"type\": \"string\"}},\n    \"experience_years\": {\"type\": \"number\"},\n    \"education\": {\"type\": \"string\"}\n  },\n  \"required\": [\"candidate_name\", \"email\", \"skills\"]\n}",
+        "autoFix": true
+      },
+      "id": "646c3203-4392-4e89-92ac-aed74f4ff945",
+      "name": "Resume Parser Output Schema",
+      "type": "@n8n/n8n-nodes-langchain.outputParserStructured",
+      "typeVersion": 1.3,
+      "position": [
+        -38672,
+        7920
+      ]
+    },
+    {
+      "parameters": {
+        "schemaType": "manual",
+        "inputSchema": "{\n  \"type\": \"object\",\n  \"properties\": {\n    \"job_title\": {\"type\": \"string\"},\n    \"required_skills\": {\"type\": \"array\", \"items\": {\"type\": \"string\"}},\n    \"required_experience_years\": {\"type\": \"number\"},\n    \"required_education\": {\"type\": [\"string\", \"null\"]},\n    \"job_description\": {\"type\": \"string\"}\n  },\n  \"required\": [\"job_title\", \"required_skills\"]\n}",
+        "autoFix": true
+      },
+      "id": "0eaa3739-615c-4890-8fc8-c6332e71420a",
+      "name": "JD Parser Output Schema",
+      "type": "@n8n/n8n-nodes-langchain.outputParserStructured",
+      "typeVersion": 1.3,
+      "position": [
+        -38720,
+        8640
+      ]
+    },
+    {
+      "parameters": {
+        "promptType": "define",
+        "text": "={{ $json.jd_text }}",
+        "hasOutputParser": true,
+        "options": {
+          "systemMessage": "You are a job description parsing expert. Extract structured information from job descriptions accurately.\n\nExtract the following information:\n- job_title: The job title/position\n- required_skills: Array of required technical skills\n- required_experience_years: Minimum years of experience required (as a number)\n- required_education: Required education level\n- job_description: Brief summary of the role\n\nReturn ONLY a valid JSON object matching this exact structure:\n{\n  \"job_title\": \"string\",\n  \"required_skills\": [\"skill1\", \"skill2\"],\n  \"required_experience_years\": 0,\n  \"required_education\": \"string or null\",\n  \"job_description\": \"string\"\n}\n\nIf a field is not found in the job description, use null for strings and 0 for numbers. Ensure all fields are present in your response."
+        }
+      },
+      "id": "e7900805-0e6d-470e-8c77-f407a2f6129e",
+      "name": "Parse Job Description",
+      "type": "@n8n/n8n-nodes-langchain.agent",
+      "typeVersion": 3.1,
+      "position": [
+        -38656,
+        8416
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "combine",
+        "combineBy": "combineByPosition",
+        "options": {
+          "clashHandling": {
+            "values": {
+              "resolveClash": "addSuffix"
+            }
+          },
+          "includeUnpaired": false
+        }
+      },
+      "id": "7ffd3776-f376-444e-b488-4421c855e8cd",
+      "name": "Merge Resume + JD Data",
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3.2,
+      "position": [
+        -38304,
+        8160
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": false,
+            "leftValue": "",
+            "typeValidation": "loose"
+          },
+          "conditions": [
+            {
+              "id": "id-1",
+              "leftValue": "={{ $json.ats_score }}",
+              "rightValue": "75",
+              "operator": {
+                "type": "number",
+                "operation": "gte"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "8bbcfa9c-4551-49c3-bf81-90be8fdd4b0b",
+      "name": "High-Fit Check",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        -37408,
+        8160
+      ]
+    },
+    {
+      "parameters": {
+        "fromEmail": "gsmanjushree19@gmail.com",
+        "toEmail": "gsmanjushree19@gmail.com",
+        "subject": "=High-Fit Candidate Detected: {{ $json.candidate_name }}",
+        "html": "=<h2>High-Fit Candidate Alert</h2>\n\n<p><strong>Candidate:</strong> {{ $json.candidate_name }}</p>\n<p><strong>Email:</strong> {{ $json.email }}</p>\n<p><strong>Phone:</strong> {{ $json.phone }}</p>\n\n<h3>Scoring Details</h3>\n<p><strong>ATS Score:</strong> {{ $json.ats_score }}/100</p>\n<p><strong>Fit Category:</strong> {{ $json.fit_category }}</p>\n<p><strong>Confidence:</strong> {{ $json.confidence }}</p>\n\n<h3>Analysis</h3>\n<p>{{ $json.explanation }}</p>\n\n<h3>Technical Details</h3>\n<p><strong>Resume Hash:</strong> {{ $json.resume_hash }}</p>\n<p><strong>JD Hash:</strong> {{ $json.jd_hash }}</p>\n<p><strong>Evaluated At:</strong> {{ $json.evaluated_at }}</p>\n\n<p><strong>Skills Found:</strong> {{ $json.skills.join(', ') }}</p>\n<p><strong>Experience:</strong> {{ $json.experience_years }} years</p>\n<p><strong>Education:</strong> {{ $json.education }}</p>",
+        "options": {}
+      },
+      "id": "f6dd8d71-6ed6-432c-a22f-0c0ec5524549",
+      "name": "Send High-Fit Email Alert",
+      "type": "n8n-nodes-base.emailSend",
+      "typeVersion": 2.1,
+      "position": [
+        -37184,
+        8064
+      ],
+      "webhookId": "9b5211b5-2039-4531-915d-5da20553c63d",
+      "credentials": {
+        "smtp": {
+          "id": "LYT9vW2K3pmLSuQM",
+          "name": "SMTP account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "authentication": "serviceAccount",
+        "operation": "appendOrUpdate",
+        "documentId": {
+          "__rl": true,
+          "value": "18XQ_RcI4imiELmfzuAOKMDkKUC1iLISN7OvkvUgdufI",
+          "mode": "id",
+          "cachedResultName": "Resume_Evaluation_Output",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/18XQ_RcI4imiELmfzuAOKMDkKUC1iLISN7OvkvUgdufI/edit?usp=drivesdk"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "Sheet1",
+          "mode": "name"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "Candidate Name": "={{ $json.candidate_name }}",
+            "Email": "={{ $json.email }}",
+            "Mobile": "={{ $json.phone }}",
+            "Resume Link": "=https://drive.google.com/file/d/{{ $('Workflow Configuration').item.json.resume_file_id }}/view",
+            "Relevance Score": "={{ $json.ats_score }}",
+            "Fit Category": "={{ $json.fit_category }}",
+            "Confidence": "={{ $json.confidence }}",
+            "Explanation": "={{ $json.explanation }}",
+            "Quality Flag": "={{ $json.quality_flag }}",
+            "Manual Review Required": "={{ $json.manual_review_required }}",
+            "Evaluation Version": "={{ $json.evaluation_version }}",
+            "Resume Hash": "={{ $json.resume_hash }}",
+            "JD Hash": "={{ $json.jd_hash }}",
+            "Evaluation Timestamp": "={{ $json.evaluated_at }}"
+          },
+          "matchingColumns": [
+            "Candidate Name"
+          ],
+          "schema": [
+            {
+              "id": "Candidate Name",
+              "displayName": "Candidate Name",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "Email",
+              "displayName": "Email",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "Mobile",
+              "displayName": "Mobile",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "Resume Link",
+              "displayName": "Resume Link",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "Relevance Score",
+              "displayName": "Relevance Score",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "Fit Category",
+              "displayName": "Fit Category",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "Confidence",
+              "displayName": "Confidence",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "Explanation",
+              "displayName": "Explanation",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "Quality Flag",
+              "displayName": "Quality Flag",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "Manual Review Required",
+              "displayName": "Manual Review Required",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "Resume Hash",
+              "displayName": "Resume Hash",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "JD Hash",
+              "displayName": "JD Hash",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "Evaluation Version",
+              "displayName": "Evaluation Version",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "Evaluation Timestamp",
+              "displayName": "Evaluation Timestamp",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "id": "aa7b11a9-ac71-457a-85cf-9a6e9885c0bb",
+      "name": "Update Google Sheet",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.7,
+      "position": [
+        -37152,
+        8256
+      ],
+      "credentials": {
+        "googleApi": {
+          "id": "RxLhX4jdJYDqGjHO",
+          "name": "Google Drive account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "// Quality Check & Manual Review Logic\n// Retrieve data from Resume Readability Check node\nconst resumeReadabilityData = $('Resume Readability Check').item.json;\nconst resumeText = resumeReadabilityData.resume_text || '';\nconst wordCount = resumeReadabilityData.word_count || 0;\nconst readability = resumeReadabilityData.readability || '';\n\n// Get current item data from Calculate ATS Score\nconst confidence = $json.confidence || '';\nconst candidateName = $json.candidate_name || '';\nconst email = $json.email || '';\nconst skills = $json.skills || [];\nconst resumeHash = $json.resume_hash || '';\nconst jdHash = $json.jd_hash || '';\n\nlet qualityFlag = 'OK';\nlet qualityReasons = [];\nlet manualReviewRequired = false;\n\n// 1. Check word count\nif (wordCount < 200) {\n  qualityReasons.push('Word count is below 200 (insufficient content for reliable parsing)');\n  manualReviewRequired = true;\n}\n\n// 2. Check readability\nif (readability === 'Poor') {\n  qualityReasons.push('Resume readability is poor (may indicate formatting issues or low-quality content)');\n  manualReviewRequired = true;\n}\n\n// 3. Check if resume text is empty or very short\nif (!resumeText || resumeText.trim().length < 100) {\n  qualityReasons.push('Resume text is empty or very short (less than 100 characters)');\n  manualReviewRequired = true;\n}\n\n// 4. Check ATS score confidence\nif (confidence === 'Low') {\n  qualityReasons.push('ATS score confidence is low (automated evaluation may be unreliable)');\n  manualReviewRequired = true;\n}\n\n// 5. Check for missing critical fields\nconst missingFields = [];\nif (!candidateName || candidateName.trim() === '') {\n  missingFields.push('candidate name');\n}\nif (!email || email.trim() === '') {\n  missingFields.push('email');\n}\nif (!skills || skills.length === 0) {\n  missingFields.push('skills');\n}\n\nif (missingFields.length > 0) {\n  qualityReasons.push(`Critical fields missing from parsed data: ${missingFields.join(', ')}`);\n  manualReviewRequired = true;\n}\n\n// Set quality flag based on manual review requirement\nif (manualReviewRequired) {\n  qualityFlag = 'Manual Review Required';\n} else {\n  qualityFlag = 'OK';\n}\n\nconst qualityReason = qualityReasons.length > 0 \n  ? qualityReasons.join('; ') \n  : 'Resume quality acceptable for automated evaluation';\n\n// Return all existing fields plus new quality fields\nreturn {\n  ...$json,\n  quality_flag: qualityFlag,\n  quality_reason: qualityReason,\n  manual_review_required: manualReviewRequired,\n  resume_hash: resumeHash,\n  jd_hash: jdHash\n};"
+      },
+      "id": "61611075-999f-4156-b41d-c17900fa371a",
+      "name": "Quality Check & Manual Review Logic",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -37856,
+        8160
+      ]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "id-4",
+              "name": "evaluation_version",
+              "value": "v1.0",
+              "type": "string"
+            },
+            {
+              "id": "id-5",
+              "name": "resume_hash",
+              "value": "={{ $json.resume_hash }}",
+              "type": "string"
+            },
+            {
+              "id": "id-6",
+              "name": "jd_hash",
+              "value": "={{ $json.jd_hash }}",
+              "type": "string"
+            }
+          ]
+        },
+        "includeOtherFields": true,
+        "options": {}
+      },
+      "id": "19ae1ba6-bf98-4732-b4bd-e1f016a780ea",
+      "name": "Add Traceability Metadata",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        -37632,
+        8160
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": false,
+            "leftValue": "",
+            "typeValidation": "loose"
+          },
+          "conditions": [
+            {
+              "id": "id-1",
+              "leftValue": "={{ $json.resume_mime_type }}",
+              "rightValue": "application/pdf",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            },
+            {
+              "id": "id-2",
+              "leftValue": "={{ $json.resume_mime_type }}",
+              "rightValue": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "or"
+        },
+        "options": {}
+      },
+      "id": "c609d78c-14d7-44cc-a805-ef338f800cc7",
+      "name": "Check File Type (PDF or DOCX)",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        -40992,
+        8064
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "text",
+        "destinationKey": "text",
+        "options": {}
+      },
+      "id": "f19f7bbd-c970-4b2e-8c2f-8f7e16e623b8",
+      "name": "Extract DOCX Text",
+      "type": "n8n-nodes-base.extractFromFile",
+      "typeVersion": 1.1,
+      "position": [
+        -40320,
+        8256
+      ]
+    },
+    {
+      "parameters": {
+        "errorMessage": "Invalid file type. Only PDF and DOCX files are accepted."
+      },
+      "id": "71c5bd36-f512-48aa-beed-54d21ef2b1cf",
+      "name": "Error - Invalid File Type",
+      "type": "n8n-nodes-base.stopAndError",
+      "typeVersion": 1,
+      "position": [
+        -40768,
+        7968
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": false,
+            "leftValue": "",
+            "typeValidation": "loose"
+          },
+          "conditions": [
+            {
+              "id": "id-1",
+              "leftValue": "={{ $json.resume_mime_type }}",
+              "rightValue": "application/pdf",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "72eec858-d7db-4c4c-838a-1d1cae7094be",
+      "name": "Route PDF or DOCX",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        -40544,
+        8160
+      ]
+    },
+    {
+      "parameters": {
+        "promptType": "define",
+        "text": "={{ $('Resume Readability Check').item.json.resume_text }}",
+        "hasOutputParser": true,
+        "options": {
+          "systemMessage": "You are a resume parsing expert. Extract structured information from resumes accurately.\n\nExtract the following information:\n- candidate_name: Full name of the candidate\n- email: Email address\n- phone: Phone number\n- skills: Array of technical skills mentioned\n- experience_years: Total years of professional experience (as a number)\n- education: Highest education level\n\nIMPORTANT: You MUST return a valid JSON object that matches this EXACT structure. If a field is not found in the resume, use empty string for strings, empty array for arrays, and 0 for numbers. Do NOT omit any fields.\n\nReturn ONLY a valid JSON object matching this exact structure:\n{\n  \"candidate_name\": \"string\",\n  \"email\": \"string\",\n  \"phone\": \"string\",\n  \"skills\": [\"skill1\", \"skill2\"],\n  \"experience_years\": 0,\n  \"education\": \"string\"\n}\n\nEnsure all fields are present in your response, even if their values are empty strings, empty arrays, or 0."
+        }
+      },
+      "id": "ec3b9086-f660-419f-bde2-9f760c17900f",
+      "name": "Parse Resume1",
+      "type": "@n8n/n8n-nodes-langchain.agent",
+      "typeVersion": 3.1,
+      "position": [
+        -38752,
+        7696
+      ]
+    },
+    {
+      "parameters": {
+        "content": "## WHAT HAVE I DESIGNED\n**Designed a RESUME RELEVANCE SCORING WORKFLOW which Automates resume screening by continuously evaluating incoming resumes against a job description, generating explainable relevance scores, and maintaining a live, recruiter-ready evaluation sheet with traceability and edge-case handling.**  ",
+        "height": 192,
+        "width": 496,
+        "color": 6
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "position": [
+        -41552,
+        7680
+      ],
+      "typeVersion": 1,
+      "id": "1e511ed0-04bb-444b-9923-74abd5212fee",
+      "name": "Sticky Note"
+    },
+    {
+      "parameters": {
+        "content": "## Handling edge cases\n**Detects low-quality resumes, missing critical fields, and low-confidence evaluations, and flags them for manual review instead of blind automation.** ",
+        "height": 112,
+        "width": 416,
+        "color": 6
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "position": [
+        -38176,
+        8352
+      ],
+      "typeVersion": 1,
+      "id": "34d767ce-b12f-4d81-95d9-33a677d22987",
+      "name": "Sticky Note1"
+    },
+    {
+      "parameters": {
+        "content": "## Relevance Scoring & Output\n**Evaluates each resume against the job description using weighted criteria, generates an explainable relevance score, and updates a live Google Sheet with candidate details and resume references.**",
+        "height": 240
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "position": [
+        -38144,
+        7824
+      ],
+      "typeVersion": 1,
+      "id": "20c5b244-00fa-4bfe-b546-00ef314ff86b",
+      "name": "Sticky Note2"
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "// ===== ENHANCED ATS SCORING WITH INTELLIGENT SKILL CATEGORIZATION =====\n\n// 1. Get data from merged inputs\nconst resumeData = $json.output_1 || $json.output || $json;\nconst jdData = $json.output_2 || $json.output || $json;\n\nconst resumeSkillsRaw = resumeData.skills || [];\nconst jdSkillsRaw = jdData.required_skills || [];\nconst jobTitle = (jdData.job_title || '').toLowerCase();\nconst requiredExperience = jdData.required_experience_years || 0;\n\n// 2. Force arrays\nconst resumeSkills = Array.isArray(resumeSkillsRaw)\n  ? resumeSkillsRaw\n  : resumeSkillsRaw.split(',');\n\nconst jdSkills = Array.isArray(jdSkillsRaw)\n  ? jdSkillsRaw\n  : jdSkillsRaw.split(',');\n\n// 3. Skill synonym mapping for better matching\nconst skillSynonyms = {\n  'javascript': ['js', 'ecmascript', 'node.js', 'nodejs'],\n  'python': ['py'],\n  'sql': ['mysql', 'postgresql', 'postgres', 'tsql', 'plsql', 'advanced sql'],\n  'r': ['r programming', 'r language'],\n  'looker studio': ['google data studio', 'data studio'],\n  'google sheets': ['sheets', 'excel', 'spreadsheets'],\n  'metabase': ['bi tool', 'business intelligence'],\n  'r shiny': ['shiny', 'shiny app']\n};\n\n// 4. Skill level qualifiers to remove for fuzzy matching\nconst skillLevelQualifiers = [\n  'advanced', 'basic', 'intermediate', 'senior', 'junior',\n  'expert', 'beginner', 'proficient', 'experienced'\n];\n\n// 5. Enhanced normalize function\nconst normalize = (skill) => {\n  let normalized = skill.toLowerCase().replace(/[-_]/g, ' ').trim();\n  \n  skillLevelQualifiers.forEach(qualifier => {\n    const regex = new RegExp(`\\\\b${qualifier}\\\\b\\\\s*`, 'gi');\n    normalized = normalized.replace(regex, '').trim();\n  });\n  \n  for (const [key, synonyms] of Object.entries(skillSynonyms)) {\n    if (normalized === key || synonyms.includes(normalized)) {\n      return key;\n    }\n  }\n  \n  return normalized;\n};\n\n// 6. Normalize both sides\nconst resumeNormalized = resumeSkills.map(normalize);\nconst jdNormalized = jdSkills.map(normalize);\n\n// 7. INTELLIGENT SKILL CATEGORIZATION LOGIC\n// Define industry-specific core skills\nconst industryMustHaveSkills = {\n  'data': ['sql', 'python', 'r'],\n  'analyst': ['sql', 'python', 'r'],\n  'engineer': ['python', 'sql'],\n  'scientist': ['python', 'r', 'sql'],\n  'developer': ['javascript', 'python'],\n  'frontend': ['javascript', 'html', 'css'],\n  'backend': ['python', 'sql', 'java'],\n  'fullstack': ['javascript', 'python', 'sql']\n};\n\n// Categorize skills intelligently\nconst mustHaveSkills = [];\nconst goodToHaveSkills = [];\nconst optionalSkills = [];\n\njdNormalized.forEach(skill => {\n  let isMustHave = false;\n  \n  // Check if skill matches industry core skills\n  for (const [role, coreSkills] of Object.entries(industryMustHaveSkills)) {\n    if (jobTitle.includes(role) && coreSkills.includes(skill)) {\n      isMustHave = true;\n      break;\n    }\n  }\n  \n  // SQL is MUST_HAVE for any data-related role\n  if ((jobTitle.includes('data') || jobTitle.includes('analyst') || jobTitle.includes('scientist')) \n      && skill === 'sql') {\n    isMustHave = true;\n  }\n  \n  // Python/R are MUST_HAVE for data roles\n  if ((jobTitle.includes('data') || jobTitle.includes('analyst')) \n      && (skill === 'python' || skill === 'r')) {\n    isMustHave = true;\n  }\n  \n  // Programming languages are typically MUST_HAVE for technical roles\n  const programmingLanguages = ['python', 'javascript', 'java', 'r', 'sql', 'c++', 'c#', 'go', 'rust'];\n  if (programmingLanguages.includes(skill) && !isMustHave) {\n    // If it's a programming language and appears in first half of skills, it's GOOD_TO_HAVE\n    const skillIndex = jdNormalized.indexOf(skill);\n    if (skillIndex < jdNormalized.length / 2) {\n      goodToHaveSkills.push(skill);\n      return;\n    }\n  }\n  \n  // Visualization/BI tools are typically GOOD_TO_HAVE for data roles\n  const biTools = ['looker studio', 'metabase', 'tableau', 'power bi', 'google sheets', 'r shiny'];\n  if (biTools.includes(skill)) {\n    if (jobTitle.includes('data') || jobTitle.includes('analyst')) {\n      goodToHaveSkills.push(skill);\n      return;\n    } else {\n      optionalSkills.push(skill);\n      return;\n    }\n  }\n  \n  // Frameworks and libraries are typically GOOD_TO_HAVE or OPTIONAL\n  const frameworks = ['react', 'angular', 'vue', 'django', 'flask', 'spring', 'express'];\n  if (frameworks.includes(skill)) {\n    optionalSkills.push(skill);\n    return;\n  }\n  \n  // If marked as MUST_HAVE, add to that category\n  if (isMustHave) {\n    mustHaveSkills.push(skill);\n  } else {\n    // Default: first 30% are GOOD_TO_HAVE, rest are OPTIONAL\n    const skillIndex = jdNormalized.indexOf(skill);\n    if (skillIndex < jdNormalized.length * 0.3) {\n      goodToHaveSkills.push(skill);\n    } else {\n      optionalSkills.push(skill);\n    }\n  }\n});\n\n// 8. Match skills by category\nconst matchedMustHave = mustHaveSkills.filter(skill => resumeNormalized.includes(skill));\nconst matchedGoodToHave = goodToHaveSkills.filter(skill => resumeNormalized.includes(skill));\nconst matchedOptional = optionalSkills.filter(skill => resumeNormalized.includes(skill));\n\nconst missingMustHave = mustHaveSkills.filter(skill => !resumeNormalized.includes(skill));\n\n// 9. Calculate weighted score\nconst mustHaveScore = matchedMustHave.length * 5;\nconst goodToHaveScore = matchedGoodToHave.length * 3;\nconst optionalScore = matchedOptional.length * 1;\n\nconst maxPossibleScore = (mustHaveSkills.length * 5) + (goodToHaveSkills.length * 3) + (optionalSkills.length * 1);\nconst skillScore = maxPossibleScore > 0 ? Math.round((mustHaveScore + goodToHaveScore + optionalScore) / maxPossibleScore * 70) : 0;\n\n// 10. Experience scoring with context\nconst resumeExperience = resumeData.experience_years || 0;\n\nlet experienceScore = 0;\nlet experienceContext = '';\n\nif (requiredExperience === 0) {\n  experienceScore = 15;\n  experienceContext = 'No specific experience required';\n} else if (resumeExperience >= requiredExperience * 1.5) {\n  experienceScore = 20;\n  experienceContext = `Significantly exceeds requirement (${resumeExperience} vs ${requiredExperience} years)`;\n} else if (resumeExperience >= requiredExperience) {\n  experienceScore = 15;\n  experienceContext = `Meets requirement (${resumeExperience} vs ${requiredExperience} years)`;\n} else if (resumeExperience >= requiredExperience * 0.7) {\n  experienceScore = 10;\n  experienceContext = `Close to requirement (${resumeExperience} vs ${requiredExperience} years)`;\n} else {\n  experienceScore = 5;\n  experienceContext = `Below requirement (${resumeExperience} vs ${requiredExperience} years)`;\n}\n\n// 11. Education bonus\nlet educationScore = 0;\nconst resumeEducation = (resumeData.education || '').toLowerCase();\nconst requiredEducation = (jdData.required_education || '').toLowerCase();\n\nif (requiredEducation && resumeEducation.includes(requiredEducation)) {\n  educationScore = 10;\n} else if (requiredEducation) {\n  educationScore = 5;\n}\n\n// 12. Final ATS score\nlet atsScore = skillScore + experienceScore + educationScore;\nif (atsScore > 100) atsScore = 100;\n\n// 13. Confidence level based on missing must-have skills\nlet confidenceLevel = 'High';\nif (missingMustHave.length > 0) {\n  confidenceLevel = 'Low';\n} else if (matchedGoodToHave.length < goodToHaveSkills.length * 0.5) {\n  confidenceLevel = 'Medium';\n}\n\n// 14. Fit category\nlet fitCategory = 'Low Fit';\nlet sendAlert = false;\nif (atsScore >= 75 && missingMustHave.length === 0) {\n  fitCategory = 'High Fit';\n  sendAlert = true;\n} else if (atsScore >= 50) {\n  fitCategory = 'Medium Fit';\n}\n\n// 15. Generate reasoning summary\nconst reasoningSummary = [\n  `Skill Match: ${matchedMustHave.length}/${mustHaveSkills.length} must-have, ${matchedGoodToHave.length}/${goodToHaveSkills.length} good-to-have, ${matchedOptional.length}/${optionalSkills.length} optional`,\n  experienceContext,\n  missingMustHave.length > 0 ? `Missing critical skills: ${missingMustHave.join(', ')}` : 'All critical skills matched'\n].join('. ');\n\n// 16. Retrieve hashes\nconst resumeHash = $('Resume Readability Check').item.json.resume_hash || '';\nconst jdHash = $('Generate JD Hash').item.json.jd_hash || '';\n\n// 17. Return enhanced output with skill categorization\nreturn {\n  ...resumeData,\n  ...jdData,\n  skill_categories: {\n    must_have: mustHaveSkills,\n    good_to_have: goodToHaveSkills,\n    optional: optionalSkills\n  },\n  matched_skills: {\n    must_have: matchedMustHave,\n    good_to_have: matchedGoodToHave,\n    optional: matchedOptional\n  },\n  missing_must_have_skills: missingMustHave,\n  skill_match_percentage: Math.round(((matchedMustHave.length + matchedGoodToHave.length + matchedOptional.length) / jdNormalized.length) * 100),\n  ats_score: atsScore,\n  score_breakdown: {\n    skill_score: skillScore,\n    experience_score: experienceScore,\n    education_score: educationScore\n  },\n  fit_category: fitCategory,\n  send_high_fit_alert: sendAlert,\n  confidence: confidenceLevel,\n  explanation: reasoningSummary,\n  evaluated_at: new Date().toISOString(),\n  resume_hash: resumeHash,\n  jd_hash: jdHash\n};"
+      },
+      "id": "a188f264-ae7a-4475-989c-f3677b998ddf",
+      "name": "Calculate relevance Score",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -38080,
+        8160
+      ]
+    },
+    {
+      "parameters": {
+        "content": "## File format\nWhile the assignment assumes PDF resumes, the workflow also supports Word files to handle real-world variations without affecting PDF-based evaluation. This node can be removed if its not required  .",
+        "height": 192,
+        "width": 288
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "position": [
+        -41104,
+        8240
+      ],
+      "typeVersion": 1,
+      "id": "604650c8-98ce-4e02-b5b9-bcc5849b4610",
+      "name": "Sticky Note3"
+    },
+    {
+      "parameters": {
+        "content": "## AI Evaluation Logic (Environment Dependent)\n**This workflow uses n8n AI Agent nodes for parsing and evaluation. These nodes may appear unresolved when imported into environments where AI Agents are not enabled, but they represent the core reasoning and scoring logic of the system.** ",
+        "height": 208,
+        "width": 464
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "position": [
+        -38912,
+        7440
+      ],
+      "typeVersion": 1,
+      "id": "a8caaf9d-f763-471d-abf2-671fb72f2d4c",
+      "name": "Sticky Note4"
+    },
+    {
+      "parameters": {
+        "content": "## AI Evaluation Logic (Environment Dependent)\n**This workflow uses n8n AI Agent nodes for parsing and evaluation. These nodes may appear unresolved when imported into environments where AI Agents are not enabled, but they represent the core reasoning and scoring logic of the system.** ",
+        "height": 176,
+        "width": 464
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "position": [
+        -38448,
+        8560
+      ],
+      "typeVersion": 1,
+      "id": "6df1bb8f-9a8d-411b-877e-038e2063e7b6",
+      "name": "Sticky Note5"
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "New Resume Uploaded": {
+      "main": [
+        [
+          {
+            "node": "Workflow Configuration",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Workflow Configuration": {
+      "main": [
+        [
+          {
+            "node": "Check File Type (PDF or DOCX)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Download Resume File": {
+      "main": [
+        [
+          {
+            "node": "Route PDF or DOCX",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Generate Resume Hash": {
+      "main": [
+        [
+          {
+            "node": "Resume Readability Check",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Resume Readability Check": {
+      "main": [
+        [
+          {
+            "node": "Find Job Description",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Parse Resume1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Find Job Description": {
+      "main": [
+        [
+          {
+            "node": "Download Job Description",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Download Job Description": {
+      "main": [
+        [
+          {
+            "node": "Extract JD Text",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract JD Text": {
+      "main": [
+        [
+          {
+            "node": "Generate JD Hash",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "OpenAI Chat Model": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "Parse Job Description",
+            "type": "ai_languageModel",
+            "index": 0
+          },
+          {
+            "node": "Resume Parser Output Schema",
+            "type": "ai_languageModel",
+            "index": 0
+          },
+          {
+            "node": "JD Parser Output Schema",
+            "type": "ai_languageModel",
+            "index": 0
+          },
+          {
+            "node": "Parse Resume1",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Resume Parser Output Schema": {
+      "ai_outputParser": [
+        [
+          {
+            "node": "Parse Resume1",
+            "type": "ai_outputParser",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "JD Parser Output Schema": {
+      "ai_outputParser": [
+        [
+          {
+            "node": "Parse Job Description",
+            "type": "ai_outputParser",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Generate JD Hash": {
+      "main": [
+        [
+          {
+            "node": "Parse Job Description",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse Job Description": {
+      "main": [
+        [
+          {
+            "node": "Merge Resume + JD Data",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "Merge Resume + JD Data": {
+      "main": [
+        [
+          {
+            "node": "Calculate relevance Score",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "High-Fit Check": {
+      "main": [
+        [
+          {
+            "node": "Send High-Fit Email Alert",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Update Google Sheet",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Update Google Sheet",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Quality Check & Manual Review Logic": {
+      "main": [
+        [
+          {
+            "node": "Add Traceability Metadata",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Add Traceability Metadata": {
+      "main": [
+        [
+          {
+            "node": "High-Fit Check",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check File Type (PDF or DOCX)": {
+      "main": [
+        [
+          {
+            "node": "Download Resume File",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Error - Invalid File Type",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract DOCX Text": {
+      "main": [
+        [
+          {
+            "node": "Generate Resume Hash",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Route PDF or DOCX": {
+      "main": [
+        [
+          {
+            "node": "Extract Resume Text",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Extract DOCX Text",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract Resume Text": {
+      "main": [
+        [
+          {
+            "node": "Generate Resume Hash",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse Resume1": {
+      "main": [
+        [
+          {
+            "node": "Merge Resume + JD Data",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Calculate relevance Score": {
+      "main": [
+        [
+          {
+            "node": "Quality Check & Manual Review Logic",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "availableInMCP": false,
+    "timeSavedMode": "fixed",
+    "timezone": "Asia/Dili",
+    "callerPolicy": "workflowsFromSameOwner"
+  },
+  "versionId": "4bd68974-5873-4fca-ae5f-5cee08e3461f",
+  "meta": {
+    "instanceId": "e4eff16694a1cf838d5199db14a5802aa77241395e70655288b957fa850ec6dc"
+  },
+  "id": "CKSuhIVkVWfaVW3D",
+  "tags": []
+}
